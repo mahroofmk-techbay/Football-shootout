@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Football Shootout</title>
+  <style>
+    * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+    body {
+      margin: 0;
+      background: #0f172a;
+      color: #ffffff;
+      font-family: Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+    #hud {
+      width: 100%;
+      max-width: 460px;
+      display: flex;
+      justify-content: space-between;
+      padding: 10px 16px;
+      font-size: 16px;
+      font-weight: bold;
+      background: #1e293b;
+    }
+    canvas {
+      width: 100%;
+      max-width: 460px;
+      flex: 1;
+      max-height: 78vh;
+      background: linear-gradient(#1d4ed8 0%, #15803d 32%, #166534 100%);
+      touch-action: none;
+    }
+    #controls {
+      width: 100%;
+      max-width: 460px;
+      padding: 10px 16px;
+      background: #1e293b;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+    button {
+      padding: 10px 16px;
+      font-size: 15px;
+      font-weight: bold;
+      border: none;
+      border-radius: 6px;
+      background: #22c55e;
+      color: #052e16;
+      cursor: pointer;
+    }
+    #msg { font-size: 14px; color: #fde047; }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <span id="scoreText">Goals: 0</span>
+    <span id="shotText">Shot: 0 / 5</span>
+    <span id="bestText">Best: 0</span>
+  </div>
+
+  <canvas id="gameCanvas" width="420" height="640"></canvas>
+
+  <div id="controls">
+    <span id="msg">Swipe up from ball toward goal!</span>
+    <button id="btnReset">New Match</button>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    const scoreText = document.getElementById("scoreText");
+    const shotText = document.getElementById("shotText");
+    const bestText = document.getElementById("bestText");
+    const msgEl = document.getElementById("msg");
+    const btnReset = document.getElementById("btnReset");
+
+    const goal = { x: 70, y: 85, w: 280, h: 110 };
+    const keeper = { x: 185, y: 150, w: 50, h: 45, vx: 2.6 };
+    const ballStart = { x: 210, y: 530, r: 16 };
+    let ball = { x: ballStart.x, y: ballStart.y, r: ballStart.r, vx: 0, vy: 0, flying: false };
+
+    let goals = 0;
+    let shots = 0;
+    const maxShots = 5;
+    let bestScore = Number(localStorage.getItem("shootout_best") || 0);
+    let pointerStart = null;
+    let roundOver = false;
+
+    function updateHud() {
+      scoreText.textContent = `Goals: ${goals}`;
+      shotText.textContent = `Shot: ${shots} / ${maxShots}`;
+      bestText.textContent = `Best: ${bestScore}`;
+    }
+
+    function resetBall() {
+      ball = { x: ballStart.x, y: ballStart.y, r: ballStart.r, vx: 0, vy: 0, flying: false };
+      if (shots >= maxShots) {
+        roundOver = true;
+        if (goals > bestScore) {
+          bestScore = goals;
+          localStorage.setItem("shootout_best", String(bestScore));
+        }
+        msgEl.textContent = `Full Time: ${goals}/${maxShots} Goals! Tap New Match.`;
+        updateHud();
+      } else {
+        msgEl.textContent = "Swipe up from ball toward goal!";
+      }
+    }
+
+    function newMatch() {
+      goals = 0;
+      shots = 0;
+      roundOver = false;
+      keeper.vx = 2.6;
+      updateHud();
+      resetBall();
+    }
+
+    btnReset.addEventListener("click", newMatch);
+
+    canvas.addEventListener("pointerdown", (e) => {
+      if (ball.flying || roundOver) return;
+      const rect = canvas.getBoundingClientRect();
+      pointerStart = {
+        x: (e.clientX - rect.left) * (canvas.width / rect.width),
+        y: (e.clientY - rect.top) * (canvas.height / rect.height)
+      };
+    });
+
+    canvas.addEventListener("pointerup", (e) => {
+      if (!pointerStart || ball.flying || roundOver) return;
+      const rect = canvas.getBoundingClientRect();
+      const endX = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const endY = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+      const dx = endX - pointerStart.x;
+      const dy = endY - pointerStart.y;
+      pointerStart = null;
+
+      if (dy > -25) {
+        msgEl.textContent = "Swipe UP toward the net!";
+        return;
+      }
+
+      shots += 1;
+      updateHud();
+
+      const speed = 13;
+      const targetX = Math.max(goal.x - 30, Math.min(goal.x + goal.w + 30, ballStart.x + dx * 1.4));
+      const targetY = goal.y + 20;
+      const angle = Math.atan2(targetY - ball.y, targetX - ball.x);
+
+      ball.vx = Math.cos(angle) * speed;
+      ball.vy = Math.sin(angle) * speed;
+      ball.flying = true;
+      msgEl.textContent = "Shot taken...";
+    });
+
+    function checkShotResult() {
+      const hitKeeper =
+        ball.x + ball.r > keeper.x &&
+        ball.x - ball.r < keeper.x + keeper.w &&
+        ball.y - ball.r < keeper.y + keeper.h &&
+        ball.y + ball.r > keeper.y;
+
+      if (hitKeeper) {
+        ball.flying = false;
+        msgEl.textContent = "Saved by the keeper!";
+        setTimeout(resetBall, 800);
+        return true;
+      }
+
+      const inGoalWidth = ball.x > goal.x + 8 && ball.x < goal.x + goal.w - 8;
+      const reachedGoalLine = ball.y - ball.r <= goal.y + goal.h;
+
+      if (reachedGoalLine) {
+        ball.flying = false;
+        if (inGoalWidth) {
+          goals += 1;
+          updateHud();
+          msgEl.textContent = "GOOOAAAL!";
+        } else {
+          msgEl.textContent = "Wide / Off target!";
+        }
+        setTimeout(resetBall, 850);
+        return true;
+      }
+
+      if (ball.y < 0 || ball.x < 0 || ball.x > canvas.width) {
+        ball.flying = false;
+        msgEl.textContent = "Missed!";
+        setTimeout(resetBall, 700);
+        return true;
+      }
+      return false;
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Penalty box line
+      ctx.strokeStyle = "rgba(255,255,255,0.6)";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(45, goal.y + goal.h, canvas.width - 90, 230);
+
+      // Goal net & posts
+      ctx.fillStyle = "rgba(255,255,255,0.18)";
+      ctx.fillRect(goal.x, goal.y, goal.w, goal.h);
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 5;
+      ctx.strokeRect(goal.x, goal.y, goal.w, goal.h);
+
+      // Goalkeeper
+      ctx.fillStyle = "#f97316";
+      ctx.fillRect(keeper.x, keeper.y, keeper.w, keeper.h);
+      ctx.fillStyle = "#111827";
+      ctx.fillRect(keeper.x + 12, keeper.y + 8, 8, 6);
+      ctx.fillRect(keeper.x + 30, keeper.y + 8, 8, 6);
+
+      // Football
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+      ctx.fillStyle = "#ffffff";
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#0f172a";
+      ctx.stroke();
+    }
+
+    function loop() {
+      keeper.x += keeper.vx;
+      if (keeper.x <= goal.x + 6 || keeper.x + keeper.w >= goal.x + goal.w - 6) {
+        keeper.vx *= -1;
+      }
+
+      if (ball.flying) {
+        ball.x += ball.vx;
+        ball.y += ball.vy;
+        checkShotResult();
+      }
+
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    updateHud();
+    loop();
+  </script>
+</body>
+</html>
