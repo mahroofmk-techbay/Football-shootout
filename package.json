@@ -1,0 +1,16 @@
+{
+  "name": "football-shootout",
+  "version": "1.0.0",
+  "description": "Android Football Shootout Game built via GitHub Actions",
+  "scripts": {
+    "cap:add:android": "npx cap add android",
+    "cap:sync": "npx cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/core": "^6.1.2",
+    "@capacitor/android": "^6.1.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.2"
+  }
+}
