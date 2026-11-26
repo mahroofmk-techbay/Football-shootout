@@ -18,48 +18,82 @@
       height: 100vh;
       overflow: hidden;
     }
-    #hud {
+    #topBar, #hud, #controls {
       width: 100%;
       max-width: 460px;
+      background: #1e293b;
+      padding: 8px 12px;
       display: flex;
       justify-content: space-between;
-      padding: 10px 16px;
-      font-size: 16px;
-      font-weight: bold;
-      background: #1e293b;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
     }
+    #hud { font-size: 14px; font-weight: bold; background: #162032; }
     canvas {
       width: 100%;
       max-width: 460px;
       flex: 1;
-      max-height: 78vh;
-      background: linear-gradient(#1d4ed8 0%, #15803d 32%, #166534 100%);
+      max-height: 72vh;
+      background: linear-gradient(#1d4ed8 0%, #15803d 30%, #166534 100%);
       touch-action: none;
     }
-    #controls {
-      width: 100%;
-      max-width: 460px;
-      padding: 10px 16px;
-      background: #1e293b;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 10px;
-    }
-    button {
-      padding: 10px 16px;
-      font-size: 15px;
+    select, button, input[type="range"] {
+      padding: 7px 10px;
+      font-size: 13px;
       font-weight: bold;
       border: none;
       border-radius: 6px;
-      background: #22c55e;
-      color: #052e16;
-      cursor: pointer;
     }
-    #msg { font-size: 14px; color: #fde047; }
+    select { background: #334155; color: #ffffff; }
+    button { background: #22c55e; color: #052e16; cursor: pointer; }
+    button.secondary { background: #38bdf8; color: #082f49; }
+    button.ghost { background: #475569; color: #ffffff; }
+    #msg { font-size: 13px; color: #fde047; flex: 1; }
+
+    /* Face Crop Modal */
+    #cropModal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(2, 6, 23, 0.92);
+      z-index: 30;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      gap: 10px;
+    }
+    #cropModal.open { display: flex; }
+    #cropCanvas {
+      border: 2px solid #38bdf8;
+      border-radius: 8px;
+      background: #020617;
+      touch-action: none;
+    }
+    .crop-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      max-width: 320px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
   </style>
 </head>
 <body>
+  <div id="topBar">
+    <select id="levelSelect" aria-label="Difficulty Level">
+      <option value="beginner">Beginner</option>
+      <option value="intermediate" selected>Intermediate</option>
+      <option value="advanced">Advanced</option>
+    </select>
+    <button id="btnUploadFace" class="secondary">Keeper Face</button>
+    <button id="btnReset">New Match</button>
+    <input id="photoInput" type="file" accept="image/*" hidden />
+  </div>
+
   <div id="hud">
     <span id="scoreText">Goals: 0</span>
     <span id="shotText">Shot: 0 / 5</span>
@@ -69,50 +103,153 @@
   <canvas id="gameCanvas" width="420" height="640"></canvas>
 
   <div id="controls">
-    <span id="msg">Swipe up from ball toward goal!</span>
-    <button id="btnReset">New Match</button>
+    <span id="msg">Swipe up anywhere to kick!</span>
+  </div>
+
+  <!-- Face-Only Cropper Modal -->
+  <div id="cropModal">
+    <div style="font-weight:bold; font-size:16px;">Crop Face Only (Drag & Zoom)</div>
+    <div style="font-size:12px; color:#cbd5e1;">Position the face inside the circle frame</div>
+    <canvas id="cropCanvas" width="280" height="280"></canvas>
+    <div class="crop-controls">
+      <label for="zoomRange" style="font-size:12px;">Zoom:</label>
+      <input id="zoomRange" type="range" min="0.5" max="3" step="0.05" value="1" />
+    </div>
+    <div class="crop-controls">
+      <button id="btnSaveCrop">Use Face</button>
+      <button id="btnClearFace" class="ghost">Default Face</button>
+      <button id="btnCancelCrop" class="ghost">Cancel</button>
+    </div>
   </div>
 
   <script>
+    const LEVELS = {
+      beginner: {
+        label: "Beginner",
+        keeperSpeed: 1.7,
+        keeperWidth: 44,
+        keeperDive: 18,
+        ballSpeed: 13.5,
+        goalPadding: 14
+      },
+      intermediate: {
+        label: "Intermediate",
+        keeperSpeed: 2.9,
+        keeperWidth: 50,
+        keeperDive: 34,
+        ballSpeed: 14.5,
+        goalPadding: 8
+      },
+      advanced: {
+        label: "Advanced",
+        keeperSpeed: 4.3,
+        keeperWidth: 56,
+        keeperDive: 52,
+        ballSpeed: 15.5,
+        goalPadding: 4
+      }
+    };
+
     const canvas = document.getElementById("gameCanvas");
     const ctx = canvas.getContext("2d");
+
+    const levelSelect = document.getElementById("levelSelect");
+    const btnUploadFace = document.getElementById("btnUploadFace");
+    const photoInput = document.getElementById("photoInput");
+    const btnReset = document.getElementById("btnReset");
 
     const scoreText = document.getElementById("scoreText");
     const shotText = document.getElementById("shotText");
     const bestText = document.getElementById("bestText");
     const msgEl = document.getElementById("msg");
-    const btnReset = document.getElementById("btnReset");
 
-    const goal = { x: 70, y: 85, w: 280, h: 110 };
-    const keeper = { x: 185, y: 150, w: 50, h: 45, vx: 2.6 };
-    const ballStart = { x: 210, y: 530, r: 16 };
+    // Face cropper elements
+    const cropModal = document.getElementById("cropModal");
+    const cropCanvas = document.getElementById("cropCanvas");
+    const cropCtx = cropCanvas.getContext("2d");
+    const zoomRange = document.getElementById("zoomRange");
+    const btnSaveCrop = document.getElementById("btnSaveCrop");
+    const btnClearFace = document.getElementById("btnClearFace");
+    const btnCancelCrop = document.getElementById("btnCancelCrop");
+
+    const goal = { x: 70, y: 78, w: 280, h: 105 };
+    const keeper = {
+      x: 185,
+      y: 138,
+      w: 50,
+      h: 45,
+      vx: 2.9,
+      diveOffset: 0,
+      targetDive: 0
+    };
+
+    // Shooter stands slightly ahead of the touch/swipe area so swiping stays behind the shooter
+    const shooter = {
+      x: 210,
+      y: 445,
+      kickAnim: 0,      // 0 = idle, >0 = kicking
+      pendingShot: null
+    };
+
+    const ballStart = { x: 210, y: 495, r: 15 };
     let ball = { x: ballStart.x, y: ballStart.y, r: ballStart.r, vx: 0, vy: 0, flying: false };
 
+    let currentLevelKey = "intermediate";
     let goals = 0;
     let shots = 0;
     const maxShots = 5;
-    let bestScore = Number(localStorage.getItem("shootout_best") || 0);
-    let pointerStart = null;
     let roundOver = false;
+    let swipeStart = null;
+    let waitingForNext = false;
+
+    // Cropped keeper face image
+    let keeperFaceImg = null;
+    const savedFaceData = localStorage.getItem("shootout_keeper_face");
+    if (savedFaceData) {
+      const img = new Image();
+      img.onload = () => { keeperFaceImg = img; };
+      img.src = savedFaceData;
+    }
+
+    function getBestKey() {
+      return `shootout_best_${currentLevelKey}`;
+    }
+
+    function getBestScore() {
+      return Number(localStorage.getItem(getBestKey()) || 0);
+    }
 
     function updateHud() {
       scoreText.textContent = `Goals: ${goals}`;
       shotText.textContent = `Shot: ${shots} / ${maxShots}`;
-      bestText.textContent = `Best: ${bestScore}`;
+      bestText.textContent = `Best (${LEVELS[currentLevelKey].label}): ${getBestScore()}`;
+    }
+
+    function applyLevelSettings() {
+      const cfg = LEVELS[currentLevelKey];
+      keeper.w = cfg.keeperWidth;
+      keeper.vx = (keeper.vx < 0 ? -1 : 1) * cfg.keeperSpeed;
+      keeper.diveOffset = 0;
+      keeper.targetDive = 0;
     }
 
     function resetBall() {
       ball = { x: ballStart.x, y: ballStart.y, r: ballStart.r, vx: 0, vy: 0, flying: false };
+      shooter.kickAnim = 0;
+      shooter.pendingShot = null;
+      keeper.diveOffset = 0;
+      keeper.targetDive = 0;
+      waitingForNext = false;
+
       if (shots >= maxShots) {
         roundOver = true;
-        if (goals > bestScore) {
-          bestScore = goals;
-          localStorage.setItem("shootout_best", String(bestScore));
+        if (goals > getBestScore()) {
+          localStorage.setItem(getBestKey(), String(goals));
         }
         msgEl.textContent = `Full Time: ${goals}/${maxShots} Goals! Tap New Match.`;
         updateHud();
       } else {
-        msgEl.textContent = "Swipe up from ball toward goal!";
+        msgEl.textContent = "Swipe up anywhere to kick!";
       }
     }
 
@@ -120,111 +257,348 @@
       goals = 0;
       shots = 0;
       roundOver = false;
-      keeper.vx = 2.6;
+      waitingForNext = false;
+      applyLevelSettings();
       updateHud();
       resetBall();
     }
 
+    levelSelect.addEventListener("change", () => {
+      currentLevelKey = levelSelect.value;
+      newMatch();
+    });
+
     btnReset.addEventListener("click", newMatch);
 
-    canvas.addEventListener("pointerdown", (e) => {
-      if (ball.flying || roundOver) return;
+    // --- Face Cropper Logic ---
+    let sourceUploadImg = null;
+    let cropScale = 1;
+    let cropOffsetX = 0;
+    let cropOffsetY = 0;
+    let cropDragging = false;
+    let cropLastPt = null;
+
+    btnUploadFace.addEventListener("click", () => photoInput.click());
+
+    photoInput.addEventListener("change", (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          sourceUploadImg = img;
+          const fitScale = Math.max(cropCanvas.width / img.width, cropCanvas.height / img.height);
+          cropScale = fitScale;
+          zoomRange.min = (fitScale * 0.6).toFixed(2);
+          zoomRange.max = (fitScale * 3).toFixed(2);
+          zoomRange.value = fitScale.toFixed(2);
+          cropOffsetX = (cropCanvas.width - img.width * cropScale) / 2;
+          cropOffsetY = (cropCanvas.height - img.height * cropScale) / 2;
+          drawCropPreview();
+          cropModal.classList.add("open");
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+      photoInput.value = "";
+    });
+
+    function drawCropPreview() {
+      cropCtx.clearRect(0, 0, cropCanvas.width, cropCanvas.height);
+      if (!sourceUploadImg) return;
+
+      cropCtx.drawImage(
+        sourceUploadImg,
+        cropOffsetX,
+        cropOffsetY,
+        sourceUploadImg.width * cropScale,
+        sourceUploadImg.height * cropScale
+      );
+
+      // Darken outside face circle
+      cropCtx.save();
+      cropCtx.fillStyle = "rgba(0, 0, 0, 0.58)";
+      cropCtx.beginPath();
+      cropCtx.rect(0, 0, cropCanvas.width, cropCanvas.height);
+      cropCtx.arc(140, 140, 105, 0, Math.PI * 2, true);
+      cropCtx.fill();
+      cropCtx.restore();
+
+      // Circle guide border
+      cropCtx.beginPath();
+      cropCtx.arc(140, 140, 105, 0, Math.PI * 2);
+      cropCtx.strokeStyle = "#38bdf8";
+      cropCtx.lineWidth = 3;
+      cropCtx.stroke();
+    }
+
+    zoomRange.addEventListener("input", () => {
+      if (!sourceUploadImg) return;
+      const newScale = parseFloat(zoomRange.value);
+      const centerX = 140;
+      const centerY = 140;
+      const relX = (centerX - cropOffsetX) / cropScale;
+      const relY = (centerY - cropOffsetY) / cropScale;
+      cropScale = newScale;
+      cropOffsetX = centerX - relX * cropScale;
+      cropOffsetY = centerY - relY * cropScale;
+      drawCropPreview();
+    });
+
+    cropCanvas.addEventListener("pointerdown", (e) => {
+      cropDragging = true;
+      cropLastPt = { x: e.clientX, y: e.clientY };
+    });
+
+    window.addEventListener("pointermove", (e) => {
+      if (!cropDragging || !cropLastPt) return;
+      cropOffsetX += e.clientX - cropLastPt.x;
+      cropOffsetY += e.clientY - cropLastPt.y;
+      cropLastPt = { x: e.clientX, y: e.clientY };
+      drawCropPreview();
+    });
+
+    window.addEventListener("pointerup", () => {
+      cropDragging = false;
+      cropLastPt = null;
+    });
+
+    btnSaveCrop.addEventListener("click", () => {
+      if (!sourceUploadImg) return;
+      // Extract the 210x210 circle face area (radius 105 around 140,140)
+      const outCanvas = document.createElement("canvas");
+      outCanvas.width = 160;
+      outCanvas.height = 160;
+      const outCtx = outCanvas.getContext("2d");
+
+      outCtx.save();
+      outCtx.beginPath();
+      outCtx.arc(80, 80, 80, 0, Math.PI * 2);
+      outCtx.clip();
+
+      // Map cropCanvas coordinates (35..245) into outCanvas (0..160)
+      const srcSize = 210;
+      const ratio = outCanvas.width / srcSize;
+      outCtx.drawImage(
+        sourceUploadImg,
+        (cropOffsetX - 35) * ratio,
+        (cropOffsetY - 35) * ratio,
+        sourceUploadImg.width * cropScale * ratio,
+        sourceUploadImg.height * cropScale * ratio
+      );
+      outCtx.restore();
+
+      const dataUrl = outCanvas.toDataURL("image/png");
+      localStorage.setItem("shootout_keeper_face", dataUrl);
+      const img = new Image();
+      img.onload = () => { keeperFaceImg = img; };
+      img.src = dataUrl;
+      cropModal.classList.remove("open");
+    });
+
+    btnClearFace.addEventListener("click", () => {
+      keeperFaceImg = null;
+      localStorage.removeItem("shootout_keeper_face");
+      cropModal.classList.remove("open");
+    });
+
+    btnCancelCrop.addEventListener("click", () => {
+      cropModal.classList.remove("open");
+    });
+
+    // --- Shooting & Swipe Behind Shooter ---
+    function canvasPoint(e) {
       const rect = canvas.getBoundingClientRect();
-      pointerStart = {
+      return {
         x: (e.clientX - rect.left) * (canvas.width / rect.width),
         y: (e.clientY - rect.top) * (canvas.height / rect.height)
       };
+    }
+
+    canvas.addEventListener("pointerdown", (e) => {
+      if (ball.flying || shooter.kickAnim > 0 || roundOver || waitingForNext) return;
+      swipeStart = canvasPoint(e);
     });
 
     canvas.addEventListener("pointerup", (e) => {
-      if (!pointerStart || ball.flying || roundOver) return;
-      const rect = canvas.getBoundingClientRect();
-      const endX = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const endY = (e.clientY - rect.top) * (canvas.height / rect.height);
+      if (!swipeStart || ball.flying || shooter.kickAnim > 0 || roundOver || waitingForNext) return;
+      const endPt = canvasPoint(e);
+      const dx = endPt.x - swipeStart.x;
+      const dy = endPt.y - swipeStart.y;
+      swipeStart = null;
 
-      const dx = endX - pointerStart.x;
-      const dy = endY - pointerStart.y;
-      pointerStart = null;
-
-      if (dy > -25) {
-        msgEl.textContent = "Swipe UP toward the net!";
+      if (dy > -20) {
+        msgEl.textContent = "Swipe UP to make the shooter kick!";
         return;
       }
+
+      const cfg = LEVELS[currentLevelKey];
+      const targetX = Math.max(goal.x - 35, Math.min(goal.x + goal.w + 35, ballStart.x + dx * 1.45));
+      const targetY = goal.y + 18;
+      const angle = Math.atan2(targetY - ballStart.y, targetX - ballStart.x);
 
       shots += 1;
       updateHud();
 
-      const speed = 13;
-      const targetX = Math.max(goal.x - 30, Math.min(goal.x + goal.w + 30, ballStart.x + dx * 1.4));
-      const targetY = goal.y + 20;
-      const angle = Math.atan2(targetY - ball.y, targetX - ball.x);
-
-      ball.vx = Math.cos(angle) * speed;
-      ball.vy = Math.sin(angle) * speed;
-      ball.flying = true;
-      msgEl.textContent = "Shot taken...";
+      shooter.kickAnim = 1; // Triggers animated leg swing
+      shooter.pendingShot = {
+        vx: Math.cos(angle) * cfg.ballSpeed,
+        vy: Math.sin(angle) * cfg.ballSpeed
+      };
+      keeper.targetDive = (targetX < canvas.width / 2 ? -1 : 1) * cfg.keeperDive;
+      msgEl.textContent = "Shooter kicking...";
     });
 
+    function finishRoundWithMessage(text, delayMs = 850) {
+      ball.flying = false;
+      waitingForNext = true;
+      msgEl.textContent = text;
+      setTimeout(resetBall, delayMs);
+    }
+
     function checkShotResult() {
+      const cfg = LEVELS[currentLevelKey];
+      const keeperCenterX = keeper.x + keeper.diveOffset + keeper.w / 2;
+      const keeperLeft = keeperCenterX - keeper.w / 2;
+      const keeperRight = keeperCenterX + keeper.w / 2;
+
       const hitKeeper =
-        ball.x + ball.r > keeper.x &&
-        ball.x - ball.r < keeper.x + keeper.w &&
+        ball.x + ball.r > keeperLeft &&
+        ball.x - ball.r < keeperRight &&
         ball.y - ball.r < keeper.y + keeper.h &&
         ball.y + ball.r > keeper.y;
 
       if (hitKeeper) {
-        ball.flying = false;
-        msgEl.textContent = "Saved by the keeper!";
-        setTimeout(resetBall, 800);
+        finishRoundWithMessage("Saved by the goalkeeper!", 800);
         return true;
       }
 
-      const inGoalWidth = ball.x > goal.x + 8 && ball.x < goal.x + goal.w - 8;
+      const inGoalWidth =
+        ball.x > goal.x + cfg.goalPadding &&
+        ball.x < goal.x + goal.w - cfg.goalPadding;
       const reachedGoalLine = ball.y - ball.r <= goal.y + goal.h;
 
       if (reachedGoalLine) {
-        ball.flying = false;
         if (inGoalWidth) {
           goals += 1;
           updateHud();
-          msgEl.textContent = "GOOOAAAL!";
+          finishRoundWithMessage("GOOOAAAL!", 850);
         } else {
-          msgEl.textContent = "Wide / Off target!";
+          finishRoundWithMessage("Wide / Off target!", 800);
         }
-        setTimeout(resetBall, 850);
         return true;
       }
 
       if (ball.y < 0 || ball.x < 0 || ball.x > canvas.width) {
-        ball.flying = false;
-        msgEl.textContent = "Missed!";
-        setTimeout(resetBall, 700);
+        finishRoundWithMessage("Missed!", 750);
         return true;
       }
       return false;
     }
 
-    function draw() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      // Penalty box line
-      ctx.strokeStyle = "rgba(255,255,255,0.6)";
+    function drawGoalAndKeeper() {
+      // Penalty box & swipe zone hint
+      ctx.strokeStyle = "rgba(255,255,255,0.55)";
       ctx.lineWidth = 3;
-      ctx.strokeRect(45, goal.y + goal.h, canvas.width - 90, 230);
+      ctx.strokeRect(45, goal.y + goal.h, canvas.width - 90, 220);
 
-      // Goal net & posts
+      ctx.fillStyle = "rgba(255,255,255,0.08)";
+      ctx.fillRect(0, 520, canvas.width, 120);
+      ctx.fillStyle = "rgba(255,255,255,0.7)";
+      ctx.font = "12px Arial";
+      ctx.fillText("SWIPE AREA (Behind Shooter)", 118, 626);
+
+      // Goal net
       ctx.fillStyle = "rgba(255,255,255,0.18)";
       ctx.fillRect(goal.x, goal.y, goal.w, goal.h);
       ctx.strokeStyle = "#ffffff";
       ctx.lineWidth = 5;
       ctx.strokeRect(goal.x, goal.y, goal.w, goal.h);
 
-      // Goalkeeper
+      // Goalkeeper body + cropped face
+      const kx = keeper.x + keeper.diveOffset;
+      const ky = keeper.y;
+
+      // Keeper jersey & gloves
       ctx.fillStyle = "#f97316";
-      ctx.fillRect(keeper.x, keeper.y, keeper.w, keeper.h);
-      ctx.fillStyle = "#111827";
-      ctx.fillRect(keeper.x + 12, keeper.y + 8, 8, 6);
-      ctx.fillRect(keeper.x + 30, keeper.y + 8, 8, 6);
+      ctx.fillRect(kx + 8, ky + 22, keeper.w - 16, keeper.h - 22);
+      ctx.fillStyle = "#facc15";
+      ctx.beginPath();
+      ctx.arc(kx + 3, ky + 30, 6, 0, Math.PI * 2);
+      ctx.arc(kx + keeper.w - 3, ky + 30, 6, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Face circle
+      const faceR = 14;
+      const faceCX = kx + keeper.w / 2;
+      const faceCY = ky + 14;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(faceCX, faceCY, faceR, 0, Math.PI * 2);
+      ctx.clip();
+      if (keeperFaceImg) {
+        ctx.drawImage(keeperFaceImg, faceCX - faceR, faceCY - faceR, faceR * 2, faceR * 2);
+      } else {
+        ctx.fillStyle = "#fde68a";
+        ctx.fillRect(faceCX - faceR, faceCY - faceR, faceR * 2, faceR * 2);
+        ctx.fillStyle = "#111827";
+        ctx.fillRect(faceCX - 6, faceCY - 3, 3, 3);
+        ctx.fillRect(faceCX + 3, faceCY - 3, 3, 3);
+      }
+      ctx.restore();
+
+      ctx.beginPath();
+      ctx.arc(faceCX, faceCY, faceR, 0, Math.PI * 2);
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    function drawShooterAndBall() {
+      const sx = shooter.x;
+      const sy = shooter.y;
+
+      // Kick leg angle animation (0 -> swing forward -> return)
+      let legSwing = 0;
+      if (shooter.kickAnim > 0) {
+        const progress = 1 - shooter.kickAnim / 18;
+        legSwing = Math.sin(progress * Math.PI) * 1.05;
+      }
+
+      // Standing left leg
+      ctx.strokeStyle = "#e2e8f0";
+      ctx.lineWidth = 6;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(sx - 6, sy + 14);
+      ctx.lineTo(sx - 8, sy + 36);
+      ctx.stroke();
+
+      // Kicking right leg (animates forward toward the ball)
+      ctx.save();
+      ctx.translate(sx + 6, sy + 14);
+      ctx.rotate(legSwing);
+      ctx.strokeStyle = "#38bdf8";
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(2, 22);
+      ctx.stroke();
+      // Boot
+      ctx.fillStyle = "#ef4444";
+      ctx.fillRect(-3, 20, 12, 6);
+      ctx.restore();
+
+      // Torso (jersey)
+      ctx.fillStyle = "#2563eb";
+      ctx.fillRect(sx - 12, sy - 10, 24, 26);
+
+      // Head
+      ctx.beginPath();
+      ctx.arc(sx, sy - 20, 10, 0, Math.PI * 2);
+      ctx.fillStyle = "#fcd34d";
+      ctx.fill();
 
       // Football
       ctx.beginPath();
@@ -237,9 +611,28 @@
     }
 
     function loop() {
+      // Patrol goalkeeper inside goal
       keeper.x += keeper.vx;
-      if (keeper.x <= goal.x + 6 || keeper.x + keeper.w >= goal.x + goal.w - 6) {
-        keeper.vx *= -1;
+      if (keeper.x <= goal.x + 6) {
+        keeper.x = goal.x + 6;
+        keeper.vx = Math.abs(keeper.vx);
+      } else if (keeper.x + keeper.w >= goal.x + goal.w - 6) {
+        keeper.x = goal.x + goal.w - 6 - keeper.w;
+        keeper.vx = -Math.abs(keeper.vx);
+      }
+
+      // Smooth dive when shot is kicked
+      keeper.diveOffset += (keeper.targetDive - keeper.diveOffset) * 0.14;
+
+      // Animate shooter leg before releasing ball
+      if (shooter.kickAnim > 0) {
+        shooter.kickAnim -= 1;
+        if (shooter.kickAnim === 8 && shooter.pendingShot && !ball.flying) {
+          ball.vx = shooter.pendingShot.vx;
+          ball.vy = shooter.pendingShot.vy;
+          ball.flying = true;
+          shooter.pendingShot = null;
+        }
       }
 
       if (ball.flying) {
@@ -248,11 +641,14 @@
         checkShotResult();
       }
 
-      draw();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawGoalAndKeeper();
+      drawShooterAndBall();
       requestAnimationFrame(loop);
     }
 
     updateHud();
+    applyLevelSettings();
     loop();
   </script>
 </body>
